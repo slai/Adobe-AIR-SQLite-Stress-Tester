@@ -1,0 +1,6 @@
+.project
+.flexProperties
+.actionScriptProperties
+.settings/*
+bin-debug/*
+*.air

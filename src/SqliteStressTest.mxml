@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009" 
+					   xmlns:s="library://ns.adobe.com/flex/spark" 
+					   xmlns:mx="library://ns.adobe.com/flex/mx"
+					   minHeight="400" minWidth="600"
+					   showStatusBar="false">
+
+	<fx:Script>
+		<![CDATA[
+			import flash.filesystem.File;
+			
+			import mx.collections.ArrayCollection;
+			import mx.controls.Alert;
+			
+			[Bindable]
+			private var _running:Boolean = false;
+			[Bindable]
+			private var _threads:ArrayCollection = new ArrayCollection();
+			private var _dbInstance:DBInstance;
+			
+			protected function browseButton_clickHandler(event:MouseEvent):void
+			{
+				var f:File = File.desktopDirectory;
+				f.addEventListener(Event.SELECT, 
+					function (event:Event):void
+					{
+						testDatabasePathText.text = f.nativePath;
+					}
+				);
+				f.browseForSave("Specify the test database file");
+			}
+			
+			protected function startButton_clickHandler(event:MouseEvent):void
+			{
+				var i:Number;
+				
+				// validate
+				var threadCount:int = int(threadCountText.text);
+				if (threadCount <= 0)
+				{
+					mx.controls.Alert.show("The number of threads must be positive.", "Invalid thread count");
+					return;
+				}
+				
+				var timerInterval:int = int(timerIntervalText.text);
+				if (timerInterval <= 0)
+				{
+					mx.controls.Alert.show("The timer interval must be positive.", "Invalid timer interval");
+					return;
+				}
+				
+				var recordsPerThread:int = int(recordsPerThreadText.text);
+				if (recordsPerThread <= 0)
+				{
+					mx.controls.Alert.show("The records per thread value must be positive.", "Invalid records per thread");
+					return;
+				}
+				
+				var testDatabasePath:String = testDatabasePathText.text;
+				if (testDatabasePath == "")
+				{
+					mx.controls.Alert.show("The test database path must be specified.", "Invalid test database path");
+					return;
+				}
+				
+				var async:Boolean = asyncCheckbox.selected;
+				var checkSchema:Boolean = checkSchemaCheckbox.selected;
+				var getAfterInsertion:Boolean = getAfterInsertionCheckbox.selected;
+				
+				_running = true;
+				
+				// create DB instance
+				_dbInstance = new DBInstance(testDatabasePath, async);
+				
+				// create and start thread instances
+				_threads = new ArrayCollection();
+				results.dataProvider = _threads;
+				
+				for (i = 0; i < threadCount; i++)
+				{
+					var thread:ThreadInstance = new ThreadInstance(i+1, _dbInstance);
+					_threads.addItem(thread);
+					thread.start(recordsPerThread, timerInterval, checkSchema, getAfterInsertion, threadEndCallback);
+				}	
+			}
+			
+			protected function threadEndCallback():void
+			{
+				var i:int;
+				
+				// check if all threads have finished
+				for (i = 0; i < _threads.length; i++)
+				{
+					if (ThreadInstance(_threads.getItemAt(i)).running)
+						// a thread is still running, so quit now
+						return;
+				}
+				
+				// all threads have finished
+				_running = false;
+				
+				// clean up
+				for (i = 0; i < _threads.length; i++)
+					ThreadInstance(_threads.getItemAt(i)).dispose();
+				
+				_dbInstance.dispose();
+			}
+			
+			protected function timeTaken_LabelFunction(item:Object, column:DataGridColumn):String
+			{
+				var thread:ThreadInstance = ThreadInstance(item);
+				
+				if (item == null)
+					return "";
+				
+				if (isNaN(thread.timeTaken))
+					return "";
+				else
+					return thread.timeTaken.toString();
+			}
+		]]>
+	</fx:Script>
+	
+	<fx:Style>
+		@namespace s "library://ns.adobe.com/flex/spark";
+		@namespace mx "library://ns.adobe.com/flex/mx";
+		
+		.infoText
+		{
+			fontStyle: italic; 
+			color: #555555;
+		}
+	</fx:Style>
+
+	<fx:Declarations>
+		<!-- Place non-visual elements (e.g., services, value objects) here -->
+	</fx:Declarations>
+	
+	<s:VGroup width="100%" height="100%" paddingBottom="7" paddingLeft="7" paddingRight="7" paddingTop="7">
+		<s:HGroup width="100%">
+			<s:VGroup width="100%">
+				<s:Label text="Number of 'threads':" />
+				<mx:TextInput id="threadCountText" width="100%" text="3" enabled="{!_running}" />
+			</s:VGroup>
+			<s:VGroup width="100%">
+				<s:Label text="Timer interval (ms):" />
+				<mx:TextInput id="timerIntervalText" width="100%" text="100" enabled="{!_running}" />
+			</s:VGroup>
+			<s:VGroup width="100%">
+				<s:Label text="Number of records per thread:" />
+				<mx:TextInput id="recordsPerThreadText" width="100%" text="100" enabled="{!_running}" />
+			</s:VGroup>
+		</s:HGroup>
+		<s:VGroup width="100%">
+			<s:Label text="Test database path:" />
+			<s:HGroup width="100%">
+				<mx:TextInput id="testDatabasePathText" width="100%" text="" enabled="{!_running}" />
+				<s:Button id="browseButton" label="Browse" click="browseButton_clickHandler(event)" enabled="{!_running}" />
+			</s:HGroup>
+			<s:Label styleName="infoText">
+				<s:text>If an existing database file is selected, the table and data added during the test will be appended to it.</s:text>
+			</s:Label>
+		</s:VGroup>
+		<s:HGroup width="100%">
+			<s:CheckBox id="asyncCheckbox" label="Run asynchronously?" selected="true" enabled="{!_running}" />
+			<s:CheckBox id="checkSchemaCheckbox" label="Check schema randomly?" selected="false" enabled="{!_running}" />
+			<s:CheckBox id="getAfterInsertionCheckbox" label="Verify after insertion?" selected="false" enabled="{!_running}" />
+		</s:HGroup>
+		<s:VGroup width="100%" horizontalAlign="right">
+			<s:Button id="startButton" width="100%" label="Start" click="startButton_clickHandler(event)" enabled="{!_running}" />
+		</s:VGroup>
+		
+		<mx:DataGrid id="results" width="100%" height="100%" 
+					 visible="{_running || _threads.length > 0}" includeInLayout="{_running || _threads.length > 0}"
+					 horizontalScrollPolicy="auto">
+			<mx:columns>
+				<mx:DataGridColumn headerText="Thread Number" dataField="index" />
+				<mx:DataGridColumn headerText="Start Time" dataField="startTime" />
+				<mx:DataGridColumn headerText="End Time" dataField="endTime" />
+				<mx:DataGridColumn headerText="Time Taken (s)" dataField="timeTaken" labelFunction="timeTaken_LabelFunction" />
+				<mx:DataGridColumn headerText="Progress" dataField="progressMsg" />
+			</mx:columns>
+		</mx:DataGrid>
+		<s:Label styleName="infoText" visible="{_running || _threads.length > 0}" includeInLayout="{_running || _threads.length > 0}">
+			<s:text>Due to the state machine logic used, these times should not be used for performance comparisons.</s:text>
+		</s:Label>
+	</s:VGroup>
+	
+</s:WindowedApplication>
